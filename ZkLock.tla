@@ -192,7 +192,6 @@ ProcessResponse ==
 
 TryLock(p) ==
     /\ requests' = requests \cup {[src |-> p, type |-> "check"]}
-    \*/\ processes' = [i \in DOMAIN processes |-> [id |-> processes[i].id, acquired |-> processes[i].acquired, waiting |-> IF processes[i].id = p THEN TRUE ELSE processes[i].waiting]]
     /\ processes' = [processes EXCEPT ![p].waiting = TRUE]
     /\ UNCHANGED <<responses, lock>>
 
