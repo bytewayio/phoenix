@@ -14,7 +14,7 @@ EventTypes == {"created", "deleted", "conflict"}
 Response == [dest: PIDSet, type: ResponseTypes, content: UniversalPIDSet \cup EventTypes]
 Request == [src: PIDSet, type: MessageTypes]
 
-ProcessState == [id: PIDSet, acquired: {TRUE, FALSE}]
+ProcessState == [id: PIDSet, acquired: {TRUE, FALSE}, waiting: {TRUE, FALSE}]
 LockState == [owner: UniversalPIDSet, waiters: SUBSET PIDSet]
 
 Range(T) == { T[x] : x \in DOMAIN T }
@@ -34,14 +34,23 @@ LockInvariant ==
         LET
             owners == {p \in Range(processes): p.acquired = TRUE}
         IN
-        /\ Cardinality(owners) = 1
         /\ \A o \in owners: 
             \/ o.id = lock.owner
             \/ \E m \in responses:
                 /\ o.id = m.dest
                 /\ m.type = "event"
                 /\ m.content = "deleted"
-                
+
+WaiterIsAlive ==
+    LET
+        waiters == {p \in Range(processes): p.waiting = TRUE}
+    IN
+    \/ Cardinality(waiters) = 0
+    \/ \A w \in waiters:
+        \/ w.id \in lock.waiters
+        \/ \E m \in requests: m.src = w.id
+        \/ \E m \in responses: m.dest = w.id
+
 NoPendingRelease(p) ==
     /\ \A m \in requests: 
         \/ m.src # p
@@ -62,7 +71,7 @@ Init ==
     /\ requests = {}
     /\ responses = {}
     /\ lock = [owner |-> NullPID, waiters |-> {}]
-    /\ processes = [pid \in PIDSet |-> [id |-> pid, acquired |-> FALSE]]
+    /\ processes = [pid \in PIDSet |-> [id |-> pid, acquired |-> FALSE, waiting |-> FALSE]]
 
 Create(m) ==
     \/
@@ -120,7 +129,7 @@ ProcessResponse ==
             \/
                 /\ m.content = m.dest
                 /\ process.acquired = FALSE
-                /\ processes' = [i \in DOMAIN processes |-> [id |-> processes[i].id, acquired |-> IF processes[i].id = m.dest THEN TRUE ELSE FALSE]]
+                /\ processes' = [processes EXCEPT ![m.dest].waiting = FALSE, ![m.dest].acquired = TRUE]
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock>>
             \/
@@ -174,7 +183,7 @@ ProcessResponse ==
             \/
                 /\ m.content = "deleted"
                 /\ process.acquired = TRUE
-                /\ processes' = [i \in DOMAIN processes |-> [id |-> processes[i].id, acquired |-> IF processes[i].id = process.id THEN FALSE ELSE processes[i].acquired]]
+                /\ processes' = [processes EXCEPT ![m.dest].waiting = FALSE, ![m.dest].acquired = FALSE]
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<lock, requests>>
                 
@@ -183,7 +192,9 @@ ProcessResponse ==
 
 TryLock(p) ==
     /\ requests' = requests \cup {[src |-> p, type |-> "check"]}
-    /\ UNCHANGED <<responses, lock, processes>>
+    \*/\ processes' = [i \in DOMAIN processes |-> [id |-> processes[i].id, acquired |-> processes[i].acquired, waiting |-> IF processes[i].id = p THEN TRUE ELSE processes[i].waiting]]
+    /\ processes' = [processes EXCEPT ![p].waiting = TRUE]
+    /\ UNCHANGED <<responses, lock>>
 
 TryRelease(p) ==
     /\ requests' = requests \cup {[src |-> p, type |-> "delete"]}
