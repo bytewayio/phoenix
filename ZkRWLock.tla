@@ -49,8 +49,16 @@ TypeOK ==
     /\ requests \in SUBSET Request
     /\ responses \in SUBSET Response
 
+\* Debugging Predicates
 NoReader ==
     \A p \in Range(processes): p.rlockAcquired = FALSE
+    
+AtMostOneReader ==
+    LET
+        readers == {p \in Range(processes): p.rlockAcquired = TRUE}
+    IN
+    Cardinality(readers) < 2
+\* End debugging
 
 NoWriter == 
     \A p \in Range(processes): p.wlockAcquired = FALSE
@@ -374,6 +382,12 @@ ProcessResponse ==
                 /\ m.node = "WLNode"
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock, processes>>
+    \/
+        /\ process.pending = "None"
+        /\ process.rlockAcquired = FALSE
+        /\ process.wlockAcquired = FALSE
+        /\ responses' = responses \ {m}
+        /\ UNCHANGED <<requests, lock, processes>>
 
 TryRLock(p) ==
     /\ requests' = requests \cup {[src |-> p, type |-> "create", node |-> "RLWaiter"]}
