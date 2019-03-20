@@ -72,6 +72,12 @@ LockInvariant ==
         /\
             \/ Cardinality(writers) = 0 \* duplicate logic, for readibilty purpose
             \/ Cardinality(readers) = 0 \* the unique of writer is ensure in w.id = lock.writer above
+            \/ \A r \in readers:
+                \/ \E m \in responses:
+                    /\ r.id = m.dest
+                    /\ m.type = "event"
+                    /\ m.node = "RLWaiter"
+                    /\ m.content = "deleted"
 
 WaiterIsAlive ==
     LET
@@ -175,18 +181,198 @@ ProcessResponse ==
         m == CHOOSE r \in responses: TRUE
         process == CHOOSE p \in Range(processes): p.id = m.dest
     IN
+    \/ \*Writer behavior
+        /\ process.pending = "WLock"
+        /\ process.step = 1
+        /\
+            \/
+                /\ m.node = "RLWaiter"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "event"
+                /\
+                    \/
+                        /\ m.content \in {"created", "deleted"}
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "WLNode"]}
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<lock, processes>>
+                    \/
+                        /\ m.content \notin {"created", "deleted"}
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "data"
+                /\
+                    \/
+                        /\ m.content = NullPID
+                        /\ processes' = [processes EXCEPT ![m.dest].step = 2]
+                        /\ responses' = responses \ {m}
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "create", node |-> "WLNode"]}
+                        /\ UNCHANGED <<lock>>
+                    \/
+                        /\ m.content # NullPID
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+    \/
+        /\ process.pending = "WLock"
+        /\ process.step = 2
+        /\
+            \/
+                /\ m.node = "RLWaiter"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "event"
+                /\
+                    \/ 
+                        /\ m.content = "conflict"
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "WLNode"]}
+                        /\ processes' = [processes EXCEPT ![m.dest].step = 1]
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<lock>>
+                    \/
+                        /\ m.content # "conflict"
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "data"
+                /\
+                    \/ 
+                        /\ m.content = m.dest
+                        /\ processes' = [processes EXCEPT ![m.dest].step = 3]
+                        /\ responses' = responses \ {m}
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "RLWaiter"]}
+                        /\ UNCHANGED <<lock>>
+                    \/
+                        /\ m.content # m.dest
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+    \/
+        /\ process.pending = "WLock"
+        /\ process.step = 3
+        /\
+            \/
+                /\ m.node = "RLWaiter"
+                /\ m.type = "data"
+                /\ 
+                    \/
+                        /\ m.content = "zero"
+                        /\ processes' = [processes EXCEPT ![m.dest].wlockAcquired = TRUE, ![m.dest].step = 0, ![m.dest].pending = "None"]
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock>>
+                    \/
+                        /\ m.content = "nonzero"
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "RLWaiter"
+                /\ m.type = "event"
+                /\
+                    \/ 
+                        /\ m.content \in {"created", "deleted"}
+                        /\ responses' = responses \ {m}
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "RLWaiter"]}
+                        /\ UNCHANGED <<lock, processes>>
+                    \/
+                        /\ m.content \notin {"created", "deleted"}
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+    \/
+        /\ process.wlockAcquired = TRUE
+        /\
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "event"
+                /\
+                    \/ 
+                        /\ m.content = "deleted"
+                        /\ processes' = [processes EXCEPT ![m.dest].wlockAcquired = FALSE]
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock>>
+                    \/
+                        /\ m.content # "deleted"
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "data"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "RLWaiter"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+    \/ \* Reader behavior 
+        /\ process.pending = "RLock"
+        /\ process.step = 1
+        /\
+            \/
+                /\ m.node = "RLWaiter"
+                /\ m.type = "data"
+                /\ 
+                    \/ 
+                        /\ m.content = m.dest
+                        /\ processes' = [processes EXCEPT ![m.dest].step = 2]
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "WLNode"]}
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<lock>>
+                    \/
+                        /\ m.content # m.dest
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+    \/
+        /\ process.pending = "RLock"
+        /\ process.step = 2
+        /\
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "data"
+                /\
+                    \/
+                        /\ m.content = NullPID
+                        /\ processes' = [processes EXCEPT ![m.dest].step = 0, ![m.dest].rlockAcquired = TRUE, ![m.dest].pending = "None"]
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock>>
+                    \/
+                        /\ m.content # NullPID
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "delete", node |-> "RLWaiter"]}
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<lock, processes>>
+            \/
+                /\ m.node = "WLNode"
+                /\ m.type = "event"
+                \* TODO
     \/
         /\ m.type = "data"
         /\ m.node = "WLNode"
         /\
             \/
-                /\ m.content = NullPID
                 /\ process.pending = "WLock"
                 /\ process.step = 1
-                /\ processes' = [processes EXCEPT ![m.dest].step = 2]
-                /\ responses' = responses \ {m}
-                /\ requests' = requests \cup {[src |-> m.dest, type |-> "create", node |-> "WLNode"]}
-                /\ UNCHANGED <<lock>>
+                /\ 
+                    \/
+                        /\ m.content = NullPID
+                        /\ processes' = [processes EXCEPT ![m.dest].step = 2]
+                        /\ responses' = responses \ {m}
+                        /\ requests' = requests \cup {[src |-> m.dest, type |-> "create", node |-> "WLNode"]}
+                        /\ UNCHANGED <<lock>>
+                    \/
+                        /\ m.content # NullPID
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
             \/
                 /\ m.content = m.dest
                 /\ process.pending = "WLock"
@@ -196,22 +382,19 @@ ProcessResponse ==
                 /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "RLWaiter"]}
                 /\ UNCHANGED <<lock>>
             \/
+                /\ m.content = NullPID
                 /\ process.pending = "RLock"
                 /\ process.step = 2
-                /\ m.content = NullPID
                 /\ processes' = [processes EXCEPT ![m.dest].step = 0, ![m.dest].rlockAcquired = TRUE, ![m.dest].pending = "None"]
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock>>
             \/
+                /\ m.content # NullPID
                 /\ process.pending = "RLock"
                 /\ process.step = 2
-                /\ m.content # NullPID
                 /\ requests' = requests \cup {[src |-> m.dest, type |-> "delete", node |-> "RLWaiter"]}
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<lock, processes>>
-            \/ 
-                /\ responses' = responses \ {m}
-                /\ UNCHANGED <<requests, lock, processes>>
     \/
         /\ m.type = "data"
         /\ m.node = "RLWaiter"
@@ -219,10 +402,16 @@ ProcessResponse ==
             \/
                 /\ process.pending = "WLock"
                 /\ process.step = 3
-                /\ m.content = "zero"
-                /\ processes' = [processes EXCEPT ![m.dest].wlockAcquired = TRUE, ![m.dest].step = 0, ![m.dest].pending = "None"]
-                /\ responses' = responses \ {m}
-                /\ UNCHANGED <<requests, lock>>
+                /\
+                    \/
+                        /\ m.content = "zero"
+                        /\ processes' = [processes EXCEPT ![m.dest].wlockAcquired = TRUE, ![m.dest].step = 0, ![m.dest].pending = "None"]
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock>>
+                    \/
+                        /\ m.content = "nonzero"
+                        /\ responses' = responses \ {m}
+                        /\ UNCHANGED <<requests, lock, processes>>
             \/
                 /\ process.pending = "RLock"
                 /\ process.step = 1
@@ -231,9 +420,6 @@ ProcessResponse ==
                 /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "WLNode"]}
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<lock>>
-            \/
-                /\ responses' = responses \ {m}
-                /\ UNCHANGED <<requests, lock, processes>>
                             
     \/
         /\ m.type = "event"
@@ -254,14 +440,12 @@ ProcessResponse ==
                 /\ requests' = requests \cup {[src |-> m.dest, type |-> "create", node |-> "RLWaiter"]}
                 /\ processes' = [processes EXCEPT ![m.dest].step = 1]
                 /\ UNCHANGED <<lock>>
-            \/ 
-                /\ m.content = "deleted"
-                /\ process.pending = "WLock"
-                /\ process.step \in {1, 2}
-                /\ processes' = [processes EXCEPT ![m.dest].step = 1]
-                /\ requests' = requests \cup {[src |-> m.dest, type |-> "create", node |-> "WLNode"]}
+            \/
+                /\ m.content = "created"
+                /\ process.pending = "RLock"
+                /\ process.step = 2
                 /\ responses' = responses \ {m}
-                /\ UNCHANGED <<lock>>
+                /\ UNCHANGED <<requests, lock, processes>>
             \/
                 /\ m.content = "deleted"
                 /\ process.wlockAcquired = TRUE
@@ -269,6 +453,33 @@ ProcessResponse ==
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock>>
             \/
+                /\ process.pending = "WLock"
+                /\ process.step = 1
+                /\
+                    \/ m.content = "deleted"
+                    \/ m.content = "created"
+                /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "WLNode"]}
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<processes, lock>>
+            \/
+                /\ process.pending = "WLock"
+                /\ process.step \in {2, 3}
+                /\
+                    \/ m.content = "deleted"
+                    \/ m.content = "created"
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<requests, lock, processes>>
+            \/
+                /\ process.pending = "WLock"
+                /\ process.step = 2
+                /\ m.content = "conflict"
+                /\ requests' = requests \cup {[src |-> m.dest, type |-> "check", node |-> "WLNode"]}
+                /\ processes' = [processes EXCEPT ![m.dest].step = 1]
+                /\ responses' = responses \ {m}
+                /\ UNCHANGED <<lock>>
+            \/
+                /\ process.pending = "None"
+                /\ process.wlockAcquired = FALSE
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock, processes>>
     \/
@@ -303,9 +514,10 @@ ProcessResponse ==
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock>>
             \/
+                /\ process.pending = "None"
+                /\ process.rlockAcquired = FALSE
                 /\ responses' = responses \ {m}
                 /\ UNCHANGED <<requests, lock, processes>>
-    \/ UNCHANGED vars
 
 TryRLock(p) ==
     /\ requests' = requests \cup {[src |-> p, type |-> "create", node |-> "RLWaiter"]}
