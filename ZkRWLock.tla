@@ -58,6 +58,15 @@ AtMostOneReader ==
         readers == {p \in Range(processes): p.rlockAcquired = TRUE}
     IN
     Cardinality(readers) < 2
+
+NoPendingReaderRelease ==
+    LET 
+        writers == {p \in Range(processes): p.wlockAcquired = TRUE}
+        readers == {p \in Range(processes): p.rlockAcquired = TRUE}
+    IN 
+    \/ \A w \in writers: w.id # lock.writer
+    \/ Cardinality(readers) = 0
+
 \* End debugging
 
 NoWriter == 
