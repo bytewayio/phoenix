@@ -89,12 +89,38 @@ LockInvariant ==
         /\
             \/ Cardinality(writers) = 0 \* duplicate logic, for readibilty purpose
             \/ Cardinality(readers) = 0 \* the unique of writer is ensure in w.id = lock.writer above
-            \/ \A r \in readers:
-                \/ \E m \in responses:
-                    /\ r.id = m.dest
-                    /\ m.type = "event"
-                    /\ m.node = "RLWaiter"
-                    /\ m.content = "deleted"
+            \/
+                /\ Cardinality(writers) = 1
+                /\ 
+                    \/ Cardinality(readers) = 0
+                    \/ \A w \in writers: 
+                        \/ \E m \in responses:
+                            /\ w.id = m.dest
+                            /\ m.type = "event"
+                            /\ m.node = "WLNode"
+                            /\ m.content = "deleted"
+                    \/ \A r \in readers:
+                        \/ \E m \in responses:
+                            /\ r.id = m.dest
+                            /\ m.type = "event"
+                            /\ m.node = "RLWaiter"
+                            /\ m.content = "deleted"
+            \/
+                /\ Cardinality(readers) # 0
+                /\ 
+                    \/ Cardinality(writers) = 0
+                    \/ \A r \in readers:
+                        \/ \E m \in responses:
+                            /\ r.id = m.dest
+                            /\ m.type = "event"
+                            /\ m.node = "RLWaiter"
+                            /\ m.content = "deleted"
+                    \/ \A w \in writers: 
+                        \/ \E m \in responses:
+                            /\ w.id = m.dest
+                            /\ m.type = "event"
+                            /\ m.node = "WLNode"
+                            /\ m.content = "deleted"
 
 WaiterIsAlive ==
     LET
