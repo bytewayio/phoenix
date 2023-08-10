@@ -1,3 +1,6 @@
 *.toolbox
 *.out
 states
+*.pdf
+*.dvi
+*.tex
